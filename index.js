@@ -1,3 +1,4 @@
+// adicionarLembrete(), parseDataTexto e iniciarMonitoramentoLembretes() só são síncronas pois somente mexem com memória e não chamam ou retornam um await (Promise), agora as outras funções são async pois fazem chamadas assíncronas ao bot (await) (esperam um retorno);
 const dotenv = require('dotenv');
 const TelegramBot = require('node-telegram-bot-api');
 dotenv.config();
@@ -76,7 +77,7 @@ bot.on('message', async (msg) => {
   }
 });
 
-bot.onText(/^\/start(?:\s+(.*))?$/, async (msg, match) => {
+bot.onText(/^\/(start|iniciar)(?:\s+(.*))?$/, async (msg, match) => {
   const extra = (match && match[1]) ? match[1].trim() : '';
   await bot.sendMessage(
     msg.chat.id,
@@ -95,7 +96,7 @@ bot.onText(/^\/lembretes(?:\s+(.*))?$/, async (msg, match) => {
   );
 });
 
-bot.onText(/^\/ajuda(?:\s+(.*))?$/, async (msg, match) => {
+bot.onText(/^\/(ajuda|help)(?:\s+(.*))?$/, async (msg, match) => {
   const extra = (match && match[1]) ? match[1].trim() : '';
   await bot.sendMessage(
     msg.chat.id,
@@ -106,7 +107,7 @@ bot.onText(/^\/ajuda(?:\s+(.*))?$/, async (msg, match) => {
   );
 });
 
-// adiciona um novo lembrete
+// adiciona um novo lembrete em memória
 function adicionarLembrete(pessoaId, lembreteTexto, dataTexto) {
   const novoId = Data.length + 1;
   Data.push({
@@ -119,21 +120,33 @@ function adicionarLembrete(pessoaId, lembreteTexto, dataTexto) {
   return novoId;
 }
 
-// converte datas em texto para objetos Date
+// converte datas em texto para objetos Date (sincrono, não usa await) (lógica de data convertida e também de 'amanhã')
 function parseDataTexto(dataTexto) {
   if (!dataTexto) return null;
-  const match = dataTexto
-    .trim()
-    .match(/^(\d{1,2})[/.\-](\d{1,2})(?:[/.\-](\d{2,4}))?$/);
+  const normalizado = dataTexto
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+    .toLowerCase()
+    .trim();
+  if (normalizado === 'amanha') {
+    const amanha = new Date();
+    amanha.setDate(amanha.getDate() + 1);
+    amanha.setHours(9, 0, 0, 0);
+    return amanha;
+  }
+    const match = dataTexto
+      .trim()
+      .match(/^(\d{1,2})[/\.\-](\d{1,2})(?:[/\.\-](\d{2,4}))?$/);
   if (!match) return null;
   let [, dia, mes, ano] = match;
   const anoCompleto = ano ? (ano.length === 2 ? `20${ano}` : ano) : new Date().getFullYear();
-  const data = new Date(Number(anoCompleto), Number(mes) - 1, Number(dia), 9, 0, 0); // executa às 09h
+  const data = new Date(Number(anoCompleto), Number(mes) - 1, Number(dia), 4, 0, 0); // executa às 04h
   return Number.isNaN(data.getTime()) ? null : data;
 }
 
-// avisa um lembrete
+// avisa um lembrete; recebe o objeto inteiro para acessar pessoa/lembrete/data
 async function avisarLembrete(lembrete) {
+  // lembrete já contém pessoa/lembrete/data, então não precisamos acessar Data aqui
   await bot.sendMessage(
     lembrete.pessoa,
     `Lembrete: ${lembrete.lembrete} (agendado para ${lembrete.data})`
@@ -145,6 +158,7 @@ async function avisarLembrete(lembrete) {
 function iniciarMonitoramentoLembretes(intervaloMs = 60 * 1000) {
   setInterval(async () => {
     const agora = Date.now();
+    // -> IMPORTANTE: ele entrega a referência ao objeto original. Por isso conseguimos ler lembrete.pessoa, lembrete.data etc. direto, e marcar
     for (const lembrete of Data) {
       // se estiver notificado, pula
       if (lembrete.notificado) continue;
